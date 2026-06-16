@@ -6,6 +6,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
 API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
+YOUR_UPI_ID = 'eliteascent@naviaxis'  # Fixed configuration string
 
 bot = telebot.TeleBot('8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I')
 
@@ -34,7 +35,14 @@ def handle_menu_clicks(call):
             with open("stock.txt", "r") as file:
                 count = len(file.readlines())
             bot.answer_callback_query(call.id)
-            bot.send_message(call.message.chat.id, f"📦 Current Stock: {count} accounts available.")
+            
+            # FIXED: Dynamic text rewrite prevents Telegram from caching old stock numbers
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"📦 Current Stock: {count} accounts available.",
+                reply_markup=call.message.reply_markup
+            )
         except FileNotFoundError:
             bot.send_message(call.message.chat.id, "❌ Stock database is offline.")
 
@@ -56,7 +64,7 @@ def handle_menu_clicks(call):
         price_inr = 20
         transaction_id = f"TXN{random.randint(100000, 999999)}"
         
-        # FIXED: Hardcoded your correct UPI ID directly to prevent structural crashes
+        # FIXED: Inlined your verified UPI ID directly to prevent structural crashes
         upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
         
         qr = qrcode.make(upi_url)
