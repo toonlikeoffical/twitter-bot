@@ -3,6 +3,7 @@ import random
 import os
 import qrcode
 import io
+import requests  # Added to fetch stock from GitHub dynamically
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
@@ -10,21 +11,24 @@ API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
 YOUR_UPI_ID = 'eliteascent@naviaxis'
 PRICE_PER_ACCOUNT = 20
 
-bot = telebot.TeleBot(API_TOKEN, threaded=True)
+# Replace this with your exact GitHub Raw URL for stock.txt
+# To get this, go to stock.txt on GitHub, click the "Raw" button, and copy the browser link.
+GITHUB_STOCK_RAW_URL = "https://raw.githubusercontent.com/toonlikeoffical/twitter-bot/main/stock.txt"
 
+bot = telebot.TeleBot(API_TOKEN, threaded=True)
 user_sessions = {}
 
-# Helper function to get clean, valid stock count
-def get_stock_count():
+# Helper function to pull the absolute newest stock directly from GitHub
+def get_live_stock():
     try:
-        if not os.path.exists("stock.txt"):
-            return 0
-        with open("stock.txt", "r", encoding="utf-8") as file:
-            # Strictly counts lines that actually have content (ignoring spaces or empty breaks)
-            lines = [line.strip() for line in file.readlines() if line.strip()]
-            return len(lines)
-    except Exception:
-        return 0
+        response = requests.get(GITHUB_STOCK_RAW_URL, timeout=10)
+        if response.status_code == 200:
+            # Reads and cleans lines directly from GitHub
+            lines = [line.strip() for line in response.text.splitlines() if line.strip()]
+            return lines
+    except Exception as e:
+        print(f"Error fetching live stock: {e}")
+    return []
 
 # --- HOME MENU ---
 @bot.message_handler(commands=['start', 'help'])
@@ -45,7 +49,8 @@ def send_welcome(message):
 def handle_menu_clicks(call):
     # 1. LIVE STOCK CHECK
     if call.data == "menu_stock":
-        count = get_stock_count()
+        lines = get_live_stock()
+        count = len(lines)
         bot.answer_callback_query(call.id)
         
         bot.edit_message_text(
@@ -57,7 +62,8 @@ def handle_menu_clicks(call):
 
     # 2. SELECT QUANTITY MENU
     elif call.data == "menu_buy":
-        count = get_stock_count()
+        lines = get_live_stock()
+        count = len(lines)
         bot.answer_callback_query(call.id)
         
         if count == 0:
@@ -81,7 +87,7 @@ def handle_menu_clicks(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"🔢 *How many accounts would you like to buy?*\n\n📈 _Available Stock lines: {count}_\n\nSelect an option below:",
+            text=f"🔢 *How many accounts would you like to buy?*\n\n📈 _Available Stock: {count}_\n\nSelect an option below:",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -89,14 +95,15 @@ def handle_menu_clicks(call):
     # 3. CHOOSE PAYMENT SYSTEM
     elif call.data.startswith("select_qty_"):
         selected_qty = int(call.data.replace("select_qty_", ""))
-        current_stock = get_stock_count()
+        lines = get_live_stock()
+        current_stock = len(lines)
         
         if selected_qty > current_stock:
             bot.answer_callback_query(call.id, "⚠️ Not enough stock available!", show_alert=True)
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} items, but we only have *{current_stock}* lines left in stock.\n\nPlease type /start and select a package that fits our remaining stock.",
+                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} items, but we only have *{current_stock}* left on GitHub.\n\nPlease type /start and select a package that fits our remaining stock.",
                 parse_mode="Markdown"
             )
             return
@@ -122,7 +129,8 @@ def handle_menu_clicks(call):
         _, _, gateway, qty_str = call.data.split("_")
         qty = int(qty_str)
         
-        current_stock = get_stock_count()
+        lines = get_live_stock()
+        current_stock = len(lines)
         if qty > current_stock:
             bot.answer_callback_query(call.id, "⚠️ Stock dropped just now!", show_alert=True)
             bot.send_message(call.message.chat.id, "❌ Sorry, inventory shifted. Payment cancelled. Please use /start to refresh.")
@@ -191,39 +199,37 @@ def process_utr_submission(message, tx_id):
     session_data = user_sessions.get(tx_id, {"quantity": 1})
     qty_to_deliver = session_data["quantity"]
 
-    try:
-        with open("stock.txt", "r", encoding="utf-8") as file:
-            lines = [line.strip() for line in file.readlines() if line.strip()]
+    # Pull down fresh live stock right at the moment of UTR verification
+    lines = get_live_stock()
+    
+    if len(lines) < qty_to_deliver:
+        bot.send_message(message.chat.id, f"⚠️ Stock dropped! Only {len(lines)} items left. Contact support for assistance.")
+        return
         
-        if len(lines) < qty_to_deliver:
-            bot.send_message(message.chat.id, f"⚠️ Stock dropped! Only {len(lines)} items left. Contact support for assistance.")
-            return
-            
-        with open("used_utrs.txt", "a") as f:
-            f.write(utr_candidate + "\n")
+    with open("used_utrs.txt", "a") as f:
+        f.write(utr_candidate + "\n")
 
-        delivered_accounts = []
-        for _ in range(qty_to_deliver):
-            chosen = random.choice(lines)
-            lines.remove(chosen)
-            delivered_accounts.append(chosen)
-        
+    delivered_accounts = []
+    for _ in range(qty_to_deliver):
+        chosen = random.choice(lines)
+        lines.remove(chosen)
+        delivered_accounts.append(chosen)
+    
+    # Save the updated remaining stock list right back onto local memory cache safely
+    if os.path.exists("stock.txt"):
         with open("stock.txt", "w", encoding="utf-8") as file:
             file.write("\n".join(lines) + "\n" if lines else "")
-            
-        accounts_text = "\n".join([f"🚀 {acc}" for acc in delivered_accounts])
         
-        bot.send_message(
-            message.chat.id, 
-            f"🎉 *Transaction Confirmed!*\n\nHere is your purchased stock inventory item(s):\n\n{accounts_text}",
-            parse_mode="Markdown"
-        )
-        
-        if tx_id in user_sessions:
-            del user_sessions[tx_id]
-
-    except Exception as e:
-        bot.send_message(message.chat.id, "Critical warehouse configuration error occurred.")
+    accounts_text = "\n".join([f"🚀 {acc}" for acc in delivered_accounts])
+    
+    bot.send_message(
+        message.chat.id, 
+        f"🎉 *Transaction Confirmed!*\n\nHere is your purchased stock inventory item(s):\n\n📦 _Note: Remember to clear out sold items from GitHub before adding new ones._\n\n{accounts_text}",
+        parse_mode="Markdown"
+    )
+    
+    if tx_id in user_sessions:
+        del user_sessions[tx_id]
 
 print("Production Secure Shop System is live...")
 bot.infinity_polling()
