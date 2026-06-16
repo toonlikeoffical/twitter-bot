@@ -4,7 +4,7 @@ import os
 import qrcode
 import io
 import requests
-import time
+import time  # Used to force fresh GitHub downloads
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
@@ -18,24 +18,14 @@ GITHUB_STOCK_RAW_URL = "https://raw.githubusercontent.com/toonlikeoffical/twitte
 bot = telebot.TeleBot(API_TOKEN, threaded=True)
 user_sessions = {}
 
-# Helper function to grab stock with a fallback chain
+# Helper function to grab stock directly from GitHub with cache-busting
 def get_live_stock():
-    # Priority 1: If a local updated stock file exists from a recent sale, use it
-    if os.path.exists("stock.txt"):
-        with open("stock.txt", "r", encoding="utf-8") as file:
-            lines = [line.strip() for line in file.readlines() if line.strip()]
-            if lines: 
-                return lines
-
-    # Priority 2: If local file is missing or empty, fetch freshly from GitHub
     try:
+        # Appending a timestamp forces GitHub to bypass its 5-minute cache window
         cache_buster_url = f"{GITHUB_STOCK_RAW_URL}?t={int(time.time())}"
         response = requests.get(cache_buster_url, timeout=10)
         if response.status_code == 200:
             lines = [line.strip() for line in response.text.splitlines() if line.strip()]
-            # Cache it locally for subsequent fast checks
-            with open("stock.txt", "w", encoding="utf-8") as file:
-                file.write("\n".join(lines) + "\n" if lines else "")
             return lines
     except Exception as e:
         print(f"Error fetching live stock: {e}")
@@ -67,7 +57,7 @@ def handle_menu_clicks(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"📦 Current Stock: {count} accounts available.",
+            text=f"📦 Current Stock: {count} accounts available on GitHub.",
             reply_markup=call.message.reply_markup
         )
 
@@ -81,7 +71,7 @@ def handle_menu_clicks(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="❌ *Out of Stock!*\n\nWe are currently sold out of premium accounts. Please check back later or contact @ZtraxModOwner.",
+                text="❌ *Out of Stock!*\n\nWe are currently sold out of premium accounts. Please update stock on GitHub or contact @ZtraxModOwner.",
                 parse_mode="Markdown"
             )
             return
@@ -114,7 +104,7 @@ def handle_menu_clicks(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} items, but we only have *{current_stock}* left.\n\nPlease type /start to refresh.",
+                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} items, but we only have *{current_stock}* left on GitHub.\n\nPlease type /start to refresh.",
                 parse_mode="Markdown"
             )
             return
@@ -210,37 +200,33 @@ def process_utr_submission(message, tx_id):
     session_data = user_sessions.get(tx_id, {"quantity": 1})
     qty_to_deliver = session_data["quantity"]
 
+    # Pull down fresh live stock right at the exact moment of verification
     lines = get_live_stock()
     
     if len(lines) < qty_to_deliver:
-        bot.send_message(message.chat.id, f"⚠️ Stock changed! Only {len(lines)} items left. Contact @ZtraxModOwner.")
+        bot.send_message(message.chat.id, f"⚠️ Stock changed! Only {len(lines)} items left. Contact @ZtraxModOwner for a manual hand-over.")
         return
         
     with open("used_utrs.txt", "a") as f:
         f.write(utr_candidate + "\n")
 
-    # Select accounts randomly for delivery
+    # Pick random accounts to send to the buyer
     delivered_accounts = []
     for _ in range(qty_to_deliver):
         chosen = random.choice(lines)
         lines.remove(chosen)
         delivered_accounts.append(chosen)
         
-    # Crucial: Immediately update Render's local storage so it registers the decrease
-    with open("stock.txt", "w", encoding="utf-8") as file:
-        file.write("\n".join(lines) + "\n" if lines else "")
-        
     accounts_text = "\n".join([f"🚀 {acc}" for acc in delivered_accounts])
     
-    # Clean delivery output — strictly formatting delivery items
     bot.send_message(
         message.chat.id, 
-        f"🎉 *Transaction Confirmed!*\n\nHere is your purchased stock item(s):\n\n{accounts_text}",
+        f"🎉 *Transaction Confirmed!*\n\nHere is your purchased stock:\n\n{accounts_text}\n\n⚠️ _Note to admin: Please remove these manually from GitHub before your next customer buys!_",
         parse_mode="Markdown"
     )
     
     if tx_id in user_sessions:
         del user_sessions[tx_id]
 
-print("Production Secure Shop System is live...")
+print("Production GitHub-Linked Shop System is live...")
 bot.infinity_polling()
