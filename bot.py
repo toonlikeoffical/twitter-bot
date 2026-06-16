@@ -1,55 +1,47 @@
+import os
+import json
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I"
-SPREADSHEET_ID = '1PLeziCk6pQTI9OS0K65IO8jUOBi8lNFbG2KY3olc8Qs'
+SPREADSHEET_ID = '1S4A0SwsJ9QOn84yX2UOKisCHW9CxAnomi9vWMf3zo2E'
 RANGE_NAME = 'Sheet1!A2:A'
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- GOOGLE SHEETS FUNCTIONS ---
+# --- GOOGLE SHEETS CONNECTION ---
+def get_service():
+    # This reads the key from the 'GOOGLE_CREDENTIALS' setting we will put in Render
+    creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+    creds = Credentials.from_service_info(info=creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    return build('sheets', 'v4', credentials=creds)
+
 def get_stock():
     try:
-        creds = Credentials.from_service_account_file('credentials.json', scopes=['https://www.googleapis.com/auth/spreadsheets'])
-        service = build('sheets', 'v4', credentials=creds)
+        service = get_service()
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
-        return [row[0] for row in result.get('values', []) if row]
+        values = result.get('values', [])
+        return [item for sublist in values for item in sublist]
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error reading sheet: {e}")
         return []
 
-def delete_stock(qty):
-    try:
-        creds = Credentials.from_service_account_file('credentials.json', scopes=['https://www.googleapis.com/auth/spreadsheets'])
-        service = build('sheets', 'v4', credentials=creds)
-        body = {"requests": [{"deleteDimension": {"range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 1, "endIndex": 1 + qty}}}]}
-        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
-    except: pass
-
-# --- RESTORED INTERFACE ---
+# --- BOT COMMANDS ---
 @bot.message_handler(commands=['start'])
 def start(message):
-    stock = get_stock()
-    if not stock:
-        bot.send_message(message.chat.id, "❌ Out of Stock!\n\nWe are currently sold out of premium accounts. Please check back later or contact @ZtraxModOwner.")
-    else:
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🛍️ Buy Accounts", callback_data="buy"))
-        bot.send_message(message.chat.id, "Welcome! Select an option:", reply_markup=markup)
+    bot.reply_to(message, "Bot is online! Use /stock to check the current stock.")
 
-@bot.callback_query_handler(func=lambda call: True)
-def query(call):
-    if call.data == "buy":
-        stock = get_stock()
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("1 Account (₹20)", callback_data="pay_1"))
-        markup.add(InlineKeyboardButton("4 Accounts (₹80)", callback_data="pay_4"))
-        bot.edit_message_text(f"📈 Available Stock: {len(stock)}\n\nSelect quantity:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-    
-    elif call.data.startswith("pay_"):
-        bot.edit_message_text("🆔 Order Ref: TXN892784\n\nScan this QR code. Once paid, click the button below to submit your UTR reference.", call.message.chat.id, call.message.message_id)
+@bot.message_handler(commands=['stock'])
+def check_stock(message):
+    stock_items = get_stock()
+    if not stock_items:
+        bot.reply_to(message, "❌ No stock found or connection error.")
+    else:
+        response = "📈 Current Stock:\n" + "\n".join(stock_items)
+        bot.reply_to(message, response)
 
 if __name__ == "__main__":
+    print("Bot is starting...")
     bot.infinity_polling()
