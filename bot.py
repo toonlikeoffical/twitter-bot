@@ -58,7 +58,7 @@ def handle_menu_clicks(call):
         transaction_id = f"TXN{random.randint(100000, 999999)}"
         
         # FIXED: Variable references standard configuration string properly now
-        upi_url = f"upi://pay?pa={YOUR_UPI_ID}&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
+        upi_url = f"upi://pay?pa={eliteascent@naviaxis}&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
         
         qr = qrcode.make(upi_url)
         qr_filename = f"upi_{transaction_id}.png"
