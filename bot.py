@@ -54,7 +54,7 @@ def handle_menu_clicks(call):
 
     elif call.data == "pay_upi":
         bot.answer_callback_query(call.id)
-        price_inr = 150 
+        price_inr = 20
         transaction_id = f"TXN{random.randint(100000, 999999)}"
         
         # FIXED: Variable references standard configuration string properly now
@@ -70,12 +70,12 @@ def handle_menu_clicks(call):
             markup.add(btn_verify)
             
             bot.send_photo(
-                call.message.chat.id, 
-                qr_img, 
-                caption=f"💰 *Amount to Pay:* ₹{price_inr}\n🆔 *Order Ref:* `{transaction_id}`\n\nScan this QR. Once paid, click the button below to submit your transaction Ref No. / UTR for immediate verification.",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
+            call.message.chat.id,
+            qr_img,
+            caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
         os.remove(qr_filename)
 
     elif call.data == "pay_crypto":
