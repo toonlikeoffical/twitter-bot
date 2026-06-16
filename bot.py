@@ -2,7 +2,7 @@ import telebot
 import random
 import os
 import qrcode
-import io  # Added to generate QR codes directly in RAM memory without saving files
+import io
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
@@ -10,11 +10,18 @@ API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
 YOUR_UPI_ID = 'eliteascent@naviaxis'
 PRICE_PER_ACCOUNT = 20
 
-# Optimized TeleBot instance with increased network timeout thresholds
 bot = telebot.TeleBot(API_TOKEN, threaded=True)
 
 # Global session memory to store order amounts perfectly
 user_sessions = {}
+
+# Helper function to get current accurate stock count
+def get_stock_count():
+    try:
+        with open("stock.txt", "r") as file:
+            return len(file.readlines())
+    except FileNotFoundError:
+        return 0
 
 # --- HOME MENU ---
 @bot.message_handler(commands=['start', 'help'])
@@ -35,24 +42,31 @@ def send_welcome(message):
 def handle_menu_clicks(call):
     # 1. LIVE STOCK CHECK
     if call.data == "menu_stock":
-        try:
-            with open("stock.txt", "r") as file:
-                count = len(file.readlines())
-            bot.answer_callback_query(call.id)
-            
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=f"📦 Current Stock: {count} accounts available.",
-                reply_markup=call.message.reply_markup
-            )
-        except FileNotFoundError:
-            bot.send_message(call.message.chat.id, "❌ Stock database is offline.")
+        count = get_stock_count()
+        bot.answer_callback_query(call.id)
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"📦 Current Stock: {count} accounts available.",
+            reply_markup=call.message.reply_markup
+        )
 
     # 2. SELECT QUANTITY MENU
     elif call.data == "menu_buy":
+        count = get_stock_count()
         bot.answer_callback_query(call.id)
         
+        # If warehouse is completely empty, block right here!
+        if count == 0:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ *Out of Stock!*\n\nWe are currently sold out of premium accounts. Please check back later or contact @ZtraxModOwner.",
+                parse_mode="Markdown"
+            )
+            return
+            
         markup = InlineKeyboardMarkup()
         btn_1 = InlineKeyboardButton("1️⃣ - Get 1 Acc (₹20)", callback_data="select_qty_1")
         btn_2 = InlineKeyboardButton("2️⃣ - Get 2 Accs (₹40)", callback_data="select_qty_2")
@@ -65,15 +79,28 @@ def handle_menu_clicks(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="🔢 *How many accounts would you like to buy?*\n\nSelect a professional package option below:",
+            text=f"🔢 *How many accounts would you like to buy?*\n\n📈 _Available Stock: {count} accounts_\n\nSelect an option below:",
             parse_mode="Markdown",
             reply_markup=markup
         )
 
-    # 3. CHOOSE PAYMENT SYSTEM
+    # 3. CHOOSE PAYMENT SYSTEM (WITH ANTI-FRAUD PRE-CHECK)
     elif call.data.startswith("select_qty_"):
-        bot.answer_callback_query(call.id)
         selected_qty = int(call.data.replace("select_qty_", ""))
+        current_stock = get_stock_count()
+        
+        # Anti-Fraud: If user tries to buy more than what's left, block them before payment!
+        if selected_qty > current_stock:
+            bot.answer_callback_query(call.id, "⚠️ Not enough stock available!", show_alert=True)
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} accounts, but we only have *{current_stock}* left in stock.\n\nPlease type /start and select a lower package.",
+                parse_mode="Markdown"
+            )
+            return
+
+        bot.answer_callback_query(call.id)
         total_cost = selected_qty * PRICE_PER_ACCOUNT
         
         markup = InlineKeyboardMarkup()
@@ -91,10 +118,17 @@ def handle_menu_clicks(call):
 
     # 4. GENERATE ROUTED PAYMENTS & RAM-BASED INSTANT QR CODES
     elif call.data.startswith("pay_now_"):
-        bot.answer_callback_query(call.id)
-        
         _, _, gateway, qty_str = call.data.split("_")
         qty = int(qty_str)
+        
+        # Double-check stock one final millisecond check before showing QR
+        current_stock = get_stock_count()
+        if qty > current_stock:
+            bot.answer_callback_query(call.id, "⚠️ Stock dropped just now!", show_alert=True)
+            bot.send_message(call.message.chat.id, "❌ Sorry, those accounts were just purchased by someone else a second ago. Payment cancelled.")
+            return
+
+        bot.answer_callback_query(call.id)
         total_price = qty * PRICE_PER_ACCOUNT
         transaction_id = f"TXN{random.randint(100000, 999999)}"
         
@@ -103,13 +137,11 @@ def handle_menu_clicks(call):
         if gateway == "upi":
             upi_url = f"upi://pay?pa={YOUR_UPI_ID}&pn=TwitterSeller&am={total_price}&cu=INR&tn={transaction_id}"
             
-            # Create QR image strictly in RAM virtual memory
             qr = qrcode.QRCode(version=1, box_size=10, border=4)
             qr.add_data(upi_url)
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
             
-            # Store in stream bytes instead of hard drive storage
             bio = io.BytesIO()
             bio.name = 'qrcode.png'
             img.save(bio, 'PNG')
@@ -119,7 +151,6 @@ def handle_menu_clicks(call):
             btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
             markup.add(btn_verify)
             
-            # Send directly from memory stream with an elevated 60s timeout window
             bot.send_photo(
                 call.message.chat.id,
                 bio,
@@ -166,17 +197,19 @@ def process_utr_submission(message, tx_id):
     session_data = user_sessions.get(tx_id, {"quantity": 1})
     qty_to_deliver = session_data["quantity"]
 
-    with open("used_utrs.txt", "a") as f:
-        f.write(utr_candidate + "\n")
-
     try:
         with open("stock.txt", "r") as file:
             lines = file.readlines()
         
+        # Absolute final layer fallback catch
         if len(lines) < qty_to_deliver:
-            bot.send_message(message.chat.id, f"⚠️ Stock dropped while payment went through! Only {len(lines)} accounts left. Contact @ZtraxModOwner for priority help.")
+            bot.send_message(message.chat.id, f"⚠️ Stock dropped completely! Only {len(lines)} accounts left. Please contact @ZtraxModOwner for priority manual refund.")
             return
             
+        # Log UTR to file ONLY after we are 100% sure we have stock to hand out
+        with open("used_utrs.txt", "a") as f:
+            f.write(utr_candidate + "\n")
+
         delivered_accounts = []
         for _ in range(qty_to_deliver):
             chosen = random.choice(lines)
