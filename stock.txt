@@ -1,4 +1,4 @@
-Username:twiterosl | pass:yourbot
-Username:twitteruser2 | pass:password55
-Username:twitteruser3 | pass:mypassword99
-Username:twitteruser4 | pass:secretpass1
+Username:twiterosl | pass:yourbo
+Username:twitteruser2 | pass:password
+Username:twitteruser3 | pass:mypasswor
+Username:twitteruser4 | pass:secretpas
