@@ -53,30 +53,30 @@ def handle_menu_clicks(call):
         )
 
     elif call.data == "pay_upi":
-        bot.answer_callback_query(call.id)
-        price_inr = 20
-        transaction_id = f"TXN{random.randint(100000, 999999)}"
+    bot.answer_callback_query(call.id)
+    price_inr = 20
+    transaction_id = f"TXN{random.randint(100000, 999999)}"
+    
+    # FIXED: Hardcoded your correct UPI ID into the text string without curly braces
+    upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterBot&am={price_inr}&cu=INR"
+    
+    qr = qrcode.make(upi_url)
+    qr_filename = f"upi_{transaction_id}.png"
+    qr.save(qr_filename)
+    
+    with open(qr_filename, "rb") as qr_img:
+        markup = InlineKeyboardMarkup()
+        btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
+        markup.add(btn_verify)
         
-        # FIXED: Variable references standard configuration string properly now
-        upi_url = f"upi://pay?pa={eliteascent@naviaxis}&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
-        
-        qr = qrcode.make(upi_url)
-        qr_filename = f"upi_{transaction_id}.png"
-        qr.save(qr_filename)
-        
-        with open(qr_filename, "rb") as qr_img:
-            markup = InlineKeyboardMarkup()
-            btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
-            markup.add(btn_verify)
-            
-            bot.send_photo(
+        bot.send_photo(
             call.message.chat.id,
             qr_img,
-            caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+            caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR. Once paid, click the button below to submit your UTR.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
             parse_mode="Markdown",
             reply_markup=markup
         )
-        os.remove(qr_filename)
+    os.remove(qr_filename)
 
     elif call.data == "pay_crypto":
         bot.answer_callback_query(call.id)
