@@ -6,7 +6,6 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
 API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
-YOUR_UPI_ID = 'eliteascent@naviaxis'  # Fixed configuration string
 
 bot = telebot.TeleBot('8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I')
 
@@ -53,29 +52,30 @@ def handle_menu_clicks(call):
         )
 
     elif call.data == "pay_upi":
-    bot.answer_callback_query(call.id)
-    price_inr = 20
-    transaction_id = f"TXN{random.randint(100000, 999999)}"
-    
-    upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterBot&am={price_inr}&cu=INR"
-    
-    qr = qrcode.make(upi_url)
-    qr_filename = f"upi_{transaction_id}.png"
-    qr.save(qr_filename)
-    
-    with open(qr_filename, "rb") as qr_img:
-        markup = InlineKeyboardMarkup()
-        btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
-        markup.add(btn_verify)
+        bot.answer_callback_query(call.id)
+        price_inr = 20
+        transaction_id = f"TXN{random.randint(100000, 999999)}"
         
-        bot.send_photo(
-            call.message.chat.id,
-            qr_img,
-            caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR. Once paid, click the button below to submit your UTR.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-    os.remove(qr_filename)
+        # FIXED: Hardcoded your correct UPI ID directly to prevent structural crashes
+        upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
+        
+        qr = qrcode.make(upi_url)
+        qr_filename = f"upi_{transaction_id}.png"
+        qr.save(qr_filename)
+        
+        with open(qr_filename, "rb") as qr_img:
+            markup = InlineKeyboardMarkup()
+            btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
+            markup.add(btn_verify)
+            
+            bot.send_photo(
+                call.message.chat.id,
+                qr_img,
+                caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR. Once paid, click the button below to submit your UTR.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+        os.remove(qr_filename)
 
     elif call.data == "pay_crypto":
         bot.answer_callback_query(call.id)
@@ -105,7 +105,6 @@ def process_utr_submission(message, tx_id):
     bot.send_message(message.chat.id, f"🔍 Checking UTR Ref: `{utr_candidate}` against real-time ledger records...")
     
     # Anti-Cheat check logic
-    # In a simple store system, we log used UTRs to a file to prevent users using old receipts
     if os.path.exists("used_utrs.txt"):
         with open("used_utrs.txt", "r") as f:
             used_list = f.read().splitlines()
@@ -130,7 +129,10 @@ def process_utr_submission(message, tx_id):
             return
             
         chosen_account = random.choice(lines).strip()
-        lines.remove(chosen_account + '\n') if (chosen_account + '\n') in lines else lines.remove(chosen_account)
+        if (chosen_account + '\n') in lines:
+            lines.remove(chosen_account + '\n')
+        else:
+            lines.remove(chosen_account)
         
         with open("stock.txt", "w") as file:
             file.writelines(lines)
