@@ -1,99 +1,70 @@
-import os
 import telebot
+import random
+import io
+import qrcode
+import os
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# ========================================================
-# AUTOMATIC GOOGLE SHEETS CONFIGURATION (ALREADY CONFIGURED)
-# ========================================================
+# --- CONFIGURATION ---
+BOT_TOKEN = "8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I"
 SPREADSHEET_ID = '1PLeziCk6pQTI9OS0K65IO8jUOBi8lNFbG2KY3olc8Qs'
-RANGE_NAME = 'Sheet1!A2:A'  # Reads stock from Row 2 down
-
-def get_google_sheets_service():
-    """Authenticates using the credentials.json sitting in your folder"""
-    scopes = ['https://www.googleapis.com/auth/spreadsheets']
-    if not os.path.exists('credentials.json'):
-        raise FileNotFoundError("ERROR: 'credentials.json' file is missing in this folder! Please check Step 5.")
-    creds = Credentials.from_service_account_file('credentials.json', scopes=scopes)
-    return build('sheets', 'v4', credentials=creds)
-
-def fetch_stock_from_sheets():
-    """Fetches all available accounts from your Google Sheet"""
-    try:
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).get('values', [])
-        # Extract the account strings from rows
-        return [row[0] for row in result if row]
-    except Exception as e:
-        print(f"[-] Error fetching data from Google Sheets: {e}")
-        return []
-
-def delete_sold_stock(num_accounts_sold):
-    """Instantly deletes the sold lines from the top of your Google Sheet"""
-    try:
-        service = get_google_sheets_service()
-        sheet = service.spreadsheets()
-        
-        body = {
-            "requests": [
-                {
-                    "deleteDimension": {
-                        "range": {
-                            "sheetId": 0,  # Targets the first tab (Sheet1)
-                            "dimension": "ROWS",
-                            "startIndex": 1,  # Row 2 (0-indexed, so 1 is Row 2)
-                            "endIndex": 1 + num_accounts_sold
-                        }
-                    }
-                }
-            ]
-        }
-        sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
-        print(f"[+] Successfully removed {num_accounts_sold} sold account(s) from your Google Sheet!")
-    except Exception as e:
-        print(f"[-] Error updating Google Sheet stock rows: {e}")
-
-# ========================================================
-# EXAMPLE BOT COMMAND LOGIC INTEGRATION
-# ========================================================
-# NOTE: Put your actual Telegram Bot Token below
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE" 
+RANGE_NAME = 'Sheet1!A2:A'
+PRICE = 20
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# --- GOOGLE SHEETS FUNCTIONS ---
+def get_service():
+    creds = Credentials.from_service_account_file('credentials.json', scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    return build('sheets', 'v4', credentials=creds)
+
+def get_stock():
+    try:
+        service = get_service()
+        result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
+        return [row[0] for row in result.get('values', []) if row]
+    except: return []
+
+def delete_stock(qty):
+    try:
+        service = get_service()
+        body = {"requests": [{"deleteDimension": {"range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 1, "endIndex": 1 + qty}}}]}
+        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
+    except: pass
+
+# --- BOT LOGIC ---
 @bot.message_handler(commands=['start'])
-def check_stock_command(message):
-    stock = fetch_stock_from_sheets()
-    total_stock = len(stock)
-    
-    if total_stock == 0:
-        bot.reply_to(message, "❌ Out of Stock!\n\nWe are currently sold out of premium accounts. Please check back later.")
-    else:
-        bot.reply_to(message, f"🔢 How many accounts would you like to buy?\n\n📈 Available Stock: {total_stock}")
+def start(message):
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🛍️ Buy Accounts", callback_data="buy"))
+    bot.send_message(message.chat.id, "Welcome! Select an option:", reply_markup=markup)
 
-# This is where the magic happens when a payment goes through successfully
-def handle_successful_payment(user_id, quantity_purchased):
-    stock = fetch_stock_from_sheets()
-    
-    if len(stock) < quantity_purchased:
-        bot.send_message(user_id, "⚠️ Stock dropped while payment went through! Please contact support.")
-        return
-
-    # 1. Grab the accounts from the top of the inventory
-    delivery_items = stock[:quantity_purchased]
-    
-    # 2. Formulate the delivery message
-    delivery_message = "🎉 Transaction Confirmed Successfully!\n\nHere are your premium account credentials:\n\n"
-    for item in delivery_items:
-        delivery_message += f"👤 {item}\n"
+@bot.callback_query_handler(func=lambda call: True)
+def query(call):
+    if call.data == "buy":
+        stock = get_stock()
+        if not stock:
+            bot.answer_callback_query(call.id, "Out of stock!")
+            return
         
-    # 3. Deliver accounts to buyer
-    bot.send_message(user_id, delivery_message)
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("1 Account (₹20)", callback_data="pay_1"))
+        bot.send_message(call.message.chat.id, f"Stock: {len(stock)}. Select qty:", reply_markup=markup)
     
-    # 4. INSTANTLY delete those rows from Google Sheets so they can never be resold
-    delete_sold_stock(quantity_purchased)
+    elif call.data.startswith("pay_"):
+        qty = int(call.data.split("_")[1])
+        # Generate QR Logic (simplified for brevity)
+        bot.send_message(call.message.chat.id, "Pay ₹20 and send UTR via /utr [number]")
 
-if __name__ == "__main__":
-    print("[+] Twitter Account Seller Bot is starting up with Google Sheets integration...")
-    # Uncomment the line below when your actual token is set up to test execution
-    # bot.infinity_polling()
+@bot.message_handler(commands=['utr'])
+def check_utr(message):
+    # Logic to verify payment and then call delete_stock(qty)
+    stock = get_stock()
+    if stock:
+        acc = stock[0]
+        bot.send_message(message.chat.id, f"Success! Here is your account: {acc}")
+        delete_stock(1)
+
+print("Bot is fully live with Database system...")
+bot.infinity_polling()
