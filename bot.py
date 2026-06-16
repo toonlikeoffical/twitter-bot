@@ -57,7 +57,6 @@ def handle_menu_clicks(call):
     price_inr = 20
     transaction_id = f"TXN{random.randint(100000, 999999)}"
     
-    # FIXED: Hardcoded your correct UPI ID into the text string without curly braces
     upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterBot&am={price_inr}&cu=INR"
     
     qr = qrcode.make(upi_url)
