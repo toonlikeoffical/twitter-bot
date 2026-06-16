@@ -15,12 +15,16 @@ bot = telebot.TeleBot(API_TOKEN, threaded=True)
 # Global session memory to store order amounts perfectly
 user_sessions = {}
 
-# Helper function to get current accurate stock count
+# Helper function to get clean, valid stock count
 def get_stock_count():
     try:
+        if not os.path.exists("stock.txt"):
+            return 0
         with open("stock.txt", "r") as file:
-            return len(file.readlines())
-    except FileNotFoundError:
+            # Filters out hidden empty lines or spaces completely
+            lines = [line.strip() for line in file.readlines() if line.strip()]
+            return len(lines)
+    except Exception:
         return 0
 
 # --- HOME MENU ---
@@ -57,7 +61,6 @@ def handle_menu_clicks(call):
         count = get_stock_count()
         bot.answer_callback_query(call.id)
         
-        # If warehouse is completely empty, block right here!
         if count == 0:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -89,7 +92,6 @@ def handle_menu_clicks(call):
         selected_qty = int(call.data.replace("select_qty_", ""))
         current_stock = get_stock_count()
         
-        # Anti-Fraud: If user tries to buy more than what's left, block them before payment!
         if selected_qty > current_stock:
             bot.answer_callback_query(call.id, "⚠️ Not enough stock available!", show_alert=True)
             bot.edit_message_text(
@@ -121,7 +123,6 @@ def handle_menu_clicks(call):
         _, _, gateway, qty_str = call.data.split("_")
         qty = int(qty_str)
         
-        # Double-check stock one final millisecond check before showing QR
         current_stock = get_stock_count()
         if qty > current_stock:
             bot.answer_callback_query(call.id, "⚠️ Stock dropped just now!", show_alert=True)
@@ -199,25 +200,26 @@ def process_utr_submission(message, tx_id):
 
     try:
         with open("stock.txt", "r") as file:
-            lines = file.readlines()
+            # FIXED: Loads all valid lines dynamically, removing empty entries
+            lines = [line.strip() for line in file.readlines() if line.strip()]
         
-        # Absolute final layer fallback catch
         if len(lines) < qty_to_deliver:
-            bot.send_message(message.chat.id, f"⚠️ Stock dropped completely! Only {len(lines)} accounts left. Please contact @ZtraxModOwner for priority manual refund.")
+            bot.send_message(message.chat.id, f"⚠️ Stock dropped completely! Only {len(lines)} accounts left. Please contact @ZtraxModOwner for priority manual help.")
             return
             
-        # Log UTR to file ONLY after we are 100% sure we have stock to hand out
         with open("used_utrs.txt", "a") as f:
             f.write(utr_candidate + "\n")
 
         delivered_accounts = []
+        # FIXED: Meticulously extracts unique accounts without duplicate selections
         for _ in range(qty_to_deliver):
             chosen = random.choice(lines)
             lines.remove(chosen)
-            delivered_accounts.append(chosen.strip())
+            delivered_accounts.append(chosen)
         
         with open("stock.txt", "w") as file:
-            file.writelines(lines)
+            # Rewrite file with remaining accounts cleanly formatted
+            file.write("\n".join(lines) + "\n" if lines else "")
             
         accounts_text = "\n".join([f"👤 ` {acc} `" for acc in delivered_accounts])
         
