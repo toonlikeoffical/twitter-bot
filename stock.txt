@@ -1,4 +1,0 @@
-Username:twiterosl | pass:your
-Username:twitteruser2 | pass:passw
-Username:twitteruser3 | pass:mypass
-Username:twitteruser4 | pass:secretp
