@@ -2,6 +2,7 @@ import telebot
 import random
 import os
 import qrcode
+import io  # Added to generate QR codes directly in RAM memory without saving files
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
@@ -9,7 +10,8 @@ API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
 YOUR_UPI_ID = 'eliteascent@naviaxis'
 PRICE_PER_ACCOUNT = 20
 
-bot = telebot.TeleBot(API_TOKEN)
+# Optimized TeleBot instance with increased network timeout thresholds
+bot = telebot.TeleBot(API_TOKEN, threaded=True)
 
 # Global session memory to store order amounts perfectly
 user_sessions = {}
@@ -51,7 +53,6 @@ def handle_menu_clicks(call):
     elif call.data == "menu_buy":
         bot.answer_callback_query(call.id)
         
-        # Build beautiful instant click buttons for quantity selection
         markup = InlineKeyboardMarkup()
         btn_1 = InlineKeyboardButton("1️⃣ - Get 1 Acc (₹20)", callback_data="select_qty_1")
         btn_2 = InlineKeyboardButton("2️⃣ - Get 2 Accs (₹40)", callback_data="select_qty_2")
@@ -88,39 +89,45 @@ def handle_menu_clicks(call):
             reply_markup=markup
         )
 
-    # 4. GENERATE ROUTED PAYMENTS & DYNAMIC QR CODES
+    # 4. GENERATE ROUTED PAYMENTS & RAM-BASED INSTANT QR CODES
     elif call.data.startswith("pay_now_"):
         bot.answer_callback_query(call.id)
         
-        # Breakdown payload information securely
         _, _, gateway, qty_str = call.data.split("_")
         qty = int(qty_str)
         total_price = qty * PRICE_PER_ACCOUNT
         transaction_id = f"TXN{random.randint(100000, 999999)}"
         
-        # Log quantity securely to global transaction mapping state
         user_sessions[transaction_id] = {"quantity": qty}
 
         if gateway == "upi":
             upi_url = f"upi://pay?pa={YOUR_UPI_ID}&pn=TwitterSeller&am={total_price}&cu=INR&tn={transaction_id}"
             
-            qr = qrcode.make(upi_url)
-            qr_filename = f"upi_{transaction_id}.png"
-            qr.save(qr_filename)
+            # Create QR image strictly in RAM virtual memory
+            qr = qrcode.QRCode(version=1, box_size=10, border=4)
+            qr.add_data(upi_url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
             
-            with open(qr_filename, "rb") as qr_img:
-                markup = InlineKeyboardMarkup()
-                btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
-                markup.add(btn_verify)
-                
-                bot.send_photo(
-                    call.message.chat.id,
-                    qr_img,
-                    caption=f"💰 *Amount to Pay:* ₹{total_price} for {qty} accounts\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR code using PhonePe, GPay, or Paytm. Once paid, click the button below to submit your UTR reference.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
-                    parse_mode="Markdown",
-                    reply_markup=markup
-                )
-            os.remove(qr_filename)
+            # Store in stream bytes instead of hard drive storage
+            bio = io.BytesIO()
+            bio.name = 'qrcode.png'
+            img.save(bio, 'PNG')
+            bio.seek(0)
+            
+            markup = InlineKeyboardMarkup()
+            btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
+            markup.add(btn_verify)
+            
+            # Send directly from memory stream with an elevated 60s timeout window
+            bot.send_photo(
+                call.message.chat.id,
+                bio,
+                caption=f"💰 *Amount to Pay:* ₹{total_price} for {qty} accounts\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR code using PhonePe, GPay, or Paytm. Once paid, click the button below to submit your UTR reference.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+                parse_mode="Markdown",
+                reply_markup=markup,
+                timeout=60
+            )
 
         elif gateway == "crypto":
             bot.send_message(
@@ -156,15 +163,12 @@ def process_utr_submission(message, tx_id):
         bot.send_message(message.chat.id, "❌ Error: This reference has already been claimed or processed.")
         return
 
-    # Fetch exact quantity recorded during checkout layer
     session_data = user_sessions.get(tx_id, {"quantity": 1})
     qty_to_deliver = session_data["quantity"]
 
-    # Block double-claiming exploits instantly
     with open("used_utrs.txt", "a") as f:
         f.write(utr_candidate + "\n")
 
-    # Handle bulk database item extractions
     try:
         with open("stock.txt", "r") as file:
             lines = file.readlines()
@@ -182,7 +186,6 @@ def process_utr_submission(message, tx_id):
         with open("stock.txt", "w") as file:
             file.writelines(lines)
             
-        # Group accounts into one beautiful output frame
         accounts_text = "\n".join([f"👤 ` {acc} `" for acc in delivered_accounts])
         
         bot.send_message(
@@ -191,7 +194,6 @@ def process_utr_submission(message, tx_id):
             parse_mode="Markdown"
         )
         
-        # Clear out state footprint
         if tx_id in user_sessions:
             del user_sessions[tx_id]
 
