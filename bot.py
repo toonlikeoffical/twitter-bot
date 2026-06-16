@@ -63,7 +63,7 @@ def handle_menu_clicks(call):
     qr_filename = f"upi_{transaction_id}.png"
     qr.save(qr_filename)
     
-        with open(qr_filename, "rb") as qr_img:
+    with open(qr_filename, "rb") as qr_img:
         markup = InlineKeyboardMarkup()
         btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
         markup.add(btn_verify)
