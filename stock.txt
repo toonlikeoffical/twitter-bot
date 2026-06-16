@@ -1,7 +1,4 @@
-usertest:idpass123123
-usertest:idpass123123
-usertest:idpass123123
-usertest:idpass123123
-usertest:idpass123123
-usertest:idpass123123
-usertest:idpass123123
+Username:twiterosl  pass:yourbot
+Username:twiterosl  pass:yourbot
+Username:twiterosl  pass:yourbot
+Username:twiterosl  pass:yourbot
