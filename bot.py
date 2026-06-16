@@ -12,7 +12,6 @@ PRICE_PER_ACCOUNT = 20
 
 bot = telebot.TeleBot(API_TOKEN, threaded=True)
 
-# Global session memory to store order amounts perfectly
 user_sessions = {}
 
 # Helper function to get clean, valid stock count
@@ -20,8 +19,8 @@ def get_stock_count():
     try:
         if not os.path.exists("stock.txt"):
             return 0
-        with open("stock.txt", "r") as file:
-            # Filters out hidden empty lines or spaces completely
+        with open("stock.txt", "r", encoding="utf-8") as file:
+            # Strictly counts lines that actually have content (ignoring spaces or empty breaks)
             lines = [line.strip() for line in file.readlines() if line.strip()]
             return len(lines)
     except Exception:
@@ -52,7 +51,7 @@ def handle_menu_clicks(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"📦 Current Stock: {count} accounts available.",
+            text=f"📦 Current Stock: {count} valid items available.",
             reply_markup=call.message.reply_markup
         )
 
@@ -82,12 +81,12 @@ def handle_menu_clicks(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"🔢 *How many accounts would you like to buy?*\n\n📈 _Available Stock: {count} accounts_\n\nSelect an option below:",
+            text=f"🔢 *How many accounts would you like to buy?*\n\n📈 _Available Stock lines: {count}_\n\nSelect an option below:",
             parse_mode="Markdown",
             reply_markup=markup
         )
 
-    # 3. CHOOSE PAYMENT SYSTEM (WITH ANTI-FRAUD PRE-CHECK)
+    # 3. CHOOSE PAYMENT SYSTEM
     elif call.data.startswith("select_qty_"):
         selected_qty = int(call.data.replace("select_qty_", ""))
         current_stock = get_stock_count()
@@ -97,7 +96,7 @@ def handle_menu_clicks(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} accounts, but we only have *{current_stock}* left in stock.\n\nPlease type /start and select a lower package.",
+                text=f"⚠️ *Insufficient Stock!*\n\nYou selected {selected_qty} items, but we only have *{current_stock}* lines left in stock.\n\nPlease type /start and select a package that fits our remaining stock.",
                 parse_mode="Markdown"
             )
             return
@@ -118,7 +117,7 @@ def handle_menu_clicks(call):
             reply_markup=markup
         )
 
-    # 4. GENERATE ROUTED PAYMENTS & RAM-BASED INSTANT QR CODES
+    # 4. GENERATE QR CODES
     elif call.data.startswith("pay_now_"):
         _, _, gateway, qty_str = call.data.split("_")
         qty = int(qty_str)
@@ -126,7 +125,7 @@ def handle_menu_clicks(call):
         current_stock = get_stock_count()
         if qty > current_stock:
             bot.answer_callback_query(call.id, "⚠️ Stock dropped just now!", show_alert=True)
-            bot.send_message(call.message.chat.id, "❌ Sorry, those accounts were just purchased by someone else a second ago. Payment cancelled.")
+            bot.send_message(call.message.chat.id, "❌ Sorry, inventory shifted. Payment cancelled. Please use /start to refresh.")
             return
 
         bot.answer_callback_query(call.id)
@@ -155,24 +154,20 @@ def handle_menu_clicks(call):
             bot.send_photo(
                 call.message.chat.id,
                 bio,
-                caption=f"💰 *Amount to Pay:* ₹{total_price} for {qty} accounts\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR code using PhonePe, GPay, or Paytm. Once paid, click the button below to submit your UTR reference.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+                caption=f"💰 *Amount to Pay:* ₹{total_price} for {qty} accounts\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR code. Once paid, click the button below to submit your UTR reference.",
                 parse_mode="Markdown",
                 reply_markup=markup,
                 timeout=60
             )
 
         elif gateway == "crypto":
-            bot.send_message(
-                call.message.chat.id, 
-                "🌐 *Crypto Automation System*\n\nInternational merchant APIs are offline. Please use UPI options above."
-            )
+            bot.send_message(call.message.chat.id, "🌐 Crypto channels are currently offline. Please use UPI options.")
 
-    # 5. INPUT REGISTRATION HANDLER FOR UTR
+    # 5. UTR INPUT REQUEST
     elif call.data.startswith("req_utr_"):
         bot.answer_callback_query(call.id)
         tx_id = call.data.replace("req_utr_", "")
-        
-        msg = bot.send_message(call.message.chat.id, "✍️ Please enter or paste your **12-digit UPI Reference Number / UTR** from your banking transaction details:")
+        msg = bot.send_message(call.message.chat.id, "✍️ Please enter your **12-digit UPI Reference Number / UTR**:")
         bot.register_next_step_handler(msg, process_utr_submission, tx_id)
 
 # --- INVENTORY DELIVERY GATEWAY ---
@@ -180,11 +175,9 @@ def process_utr_submission(message, tx_id):
     utr_candidate = message.text.strip()
     
     if not utr_candidate.isdigit() or len(utr_candidate) != 12:
-        bot.send_message(message.chat.id, "❌ Invalid transaction UTR format. It must be exactly 12 numbers. Please use /start to retry.")
+        bot.send_message(message.chat.id, "❌ Invalid UTR format. Must be 12 digits. Use /start to restart execution.")
         return
 
-    bot.send_message(message.chat.id, f"🔍 Validating UTR: `{utr_candidate}`...")
-    
     if os.path.exists("used_utrs.txt"):
         with open("used_utrs.txt", "r") as f:
             used_list = f.read().splitlines()
@@ -192,40 +185,37 @@ def process_utr_submission(message, tx_id):
         used_list = []
 
     if utr_candidate in used_list:
-        bot.send_message(message.chat.id, "❌ Error: This reference has already been claimed or processed.")
+        bot.send_message(message.chat.id, "❌ Error: This reference has already been claimed.")
         return
 
     session_data = user_sessions.get(tx_id, {"quantity": 1})
     qty_to_deliver = session_data["quantity"]
 
     try:
-        with open("stock.txt", "r") as file:
-            # FIXED: Loads all valid lines dynamically, removing empty entries
+        with open("stock.txt", "r", encoding="utf-8") as file:
             lines = [line.strip() for line in file.readlines() if line.strip()]
         
         if len(lines) < qty_to_deliver:
-            bot.send_message(message.chat.id, f"⚠️ Stock dropped completely! Only {len(lines)} accounts left. Please contact @ZtraxModOwner for priority manual help.")
+            bot.send_message(message.chat.id, f"⚠️ Stock dropped! Only {len(lines)} items left. Contact support for assistance.")
             return
             
         with open("used_utrs.txt", "a") as f:
             f.write(utr_candidate + "\n")
 
         delivered_accounts = []
-        # FIXED: Meticulously extracts unique accounts without duplicate selections
         for _ in range(qty_to_deliver):
             chosen = random.choice(lines)
             lines.remove(chosen)
             delivered_accounts.append(chosen)
         
-        with open("stock.txt", "w") as file:
-            # Rewrite file with remaining accounts cleanly formatted
+        with open("stock.txt", "w", encoding="utf-8") as file:
             file.write("\n".join(lines) + "\n" if lines else "")
             
-        accounts_text = "\n".join([f"👤 ` {acc} `" for acc in delivered_accounts])
+        accounts_text = "\n".join([f"🚀 {acc}" for acc in delivered_accounts])
         
         bot.send_message(
             message.chat.id, 
-            f"🎉 *Transaction Confirmed Successfully!*\n\nHere are your {qty_to_deliver} premium account credentials:\n\n{accounts_text}",
+            f"🎉 *Transaction Confirmed!*\n\nHere is your purchased stock inventory item(s):\n\n{accounts_text}",
             parse_mode="Markdown"
         )
         
@@ -233,7 +223,7 @@ def process_utr_submission(message, tx_id):
             del user_sessions[tx_id]
 
     except Exception as e:
-        bot.send_message(message.chat.id, "Critical warehouse storage verification error.")
+        bot.send_message(message.chat.id, "Critical warehouse configuration error occurred.")
 
 print("Production Secure Shop System is live...")
 bot.infinity_polling()
