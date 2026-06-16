@@ -6,12 +6,13 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIGURATION LAYER ---
 API_TOKEN = '8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I'
-YOUR_UPI_ID = 'eliteascent@naviaxis'  # Fixed configuration string
+YOUR_UPI_ID = 'eliteascent@naviaxis'
+PRICE_PER_ACCOUNT = 20
 
-bot = telebot.TeleBot('8618859032:AAHZJ-UGtpeRF7L4RhzSIZ3Qi2H2VKeIo2I')
+bot = telebot.TeleBot(API_TOKEN)
 
-# Temporary database to track pending transactions in memory
-pending_upi_orders = {}
+# Memory database to track user session states (quantity and transaction mapping)
+user_sessions = {}
 
 # --- HOME MENU ---
 @bot.message_handler(commands=['start', 'help'])
@@ -36,7 +37,6 @@ def handle_menu_clicks(call):
                 count = len(file.readlines())
             bot.answer_callback_query(call.id)
             
-            # FIXED: Dynamic text rewrite prevents Telegram from caching old stock numbers
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
@@ -47,72 +47,109 @@ def handle_menu_clicks(call):
             bot.send_message(call.message.chat.id, "❌ Stock database is offline.")
 
     elif call.data == "menu_buy":
-        markup = InlineKeyboardMarkup()
-        btn_upi = InlineKeyboardButton("🇮🇳 Pay via UPI (GPay/PhonePe)", callback_data="pay_upi")
-        btn_crypto = InlineKeyboardButton("🌐 Pay via Crypto (USDT/LTC)", callback_data="pay_crypto")
-        markup.add(btn_upi, btn_crypto)
+        bot.answer_callback_query(call.id)
         
-        bot.edit_message_text(
+        # Step 1: Ask for quantity instead of showing payment immediately
+        msg = bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Please select your preferred payment gateway method:",
-            reply_markup=markup
-        )
-
-    elif call.data == "pay_upi":
-        bot.answer_callback_query(call.id)
-        price_inr = 20
-        transaction_id = f"TXN{random.randint(100000, 999999)}"
-        
-        # FIXED: Inlined your verified UPI ID directly to prevent structural crashes
-        upi_url = f"upi://pay?pa=eliteascent@naviaxis&pn=TwitterSeller&am={price_inr}&cu=INR&tn={transaction_id}"
-        
-        qr = qrcode.make(upi_url)
-        qr_filename = f"upi_{transaction_id}.png"
-        qr.save(qr_filename)
-        
-        with open(qr_filename, "rb") as qr_img:
-            markup = InlineKeyboardMarkup()
-            btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
-            markup.add(btn_verify)
-            
-            bot.send_photo(
-                call.message.chat.id,
-                qr_img,
-                caption=f"💰 *Amount to Pay:* ₹{price_inr} per account\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR. Once paid, click the button below to submit your UTR.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-        os.remove(qr_filename)
-
-    elif call.data == "pay_crypto":
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            call.message.chat.id, 
-            "🌐 *Crypto Automation System*\n\nTo prevent zero-payment exploits, international orders require an OxaPay merchant setup.\n\nTo connect live crypto, paste your OxaPay API key on Line 11 to fetch live payments.",
+            text="🔢 *How many accounts would you like to purchase?*\n\nPlease type a number (e.g., 1, 2, 4, 10):",
             parse_mode="Markdown"
         )
+        bot.register_next_step_handler(msg, process_quantity_input)
+
+    elif call.data.startswith("pay_method_"):
+        bot.answer_callback_query(call.id)
+        # Parse data format: pay_method_{gateway}_{quantity}
+        _, _, gateway, qty = call.data.split("_")
+        qty = int(qty)
+        total_price = qty * PRICE_PER_ACCOUNT
+        transaction_id = f"TXN{random.randint(100000, 999999)}"
+        
+        # Save session data so verification knows how many accounts to release
+        user_sessions[transaction_id] = {"quantity": qty, "chat_id": call.message.chat.id}
+
+        if gateway == "upi":
+            upi_url = f"upi://pay?pa={YOUR_UPI_ID}&pn=TwitterSeller&am={total_price}&cu=INR&tn={transaction_id}"
+            
+            qr = qrcode.make(upi_url)
+            qr_filename = f"upi_{transaction_id}.png"
+            qr.save(qr_filename)
+            
+            with open(qr_filename, "rb") as qr_img:
+                markup = InlineKeyboardMarkup()
+                btn_verify = InlineKeyboardButton("📲 Submit Reference No. (UTR)", callback_data=f"req_utr_{transaction_id}")
+                markup.add(btn_verify)
+                
+                bot.send_photo(
+                    call.message.chat.id,
+                    qr_img,
+                    caption=f"💰 *Amount to Pay:* ₹{total_price} (for {qty} accounts)\n\n🆔 *Order Ref:* {transaction_id}\n\nScan this QR. Once paid, click the button below to submit your UTR.\n\nℹ️ *Need Help?* Contact support at @ZtraxModOwner",
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
+            os.remove(qr_filename)
+
+        elif gateway == "crypto":
+            bot.send_message(
+                call.message.chat.id, 
+                "🌐 *Crypto Automation System*\n\nInternational orders require an OxaPay merchant setup. Live tracking is offline.",
+                parse_mode="Markdown"
+            )
 
     elif call.data.startswith("req_utr_"):
         bot.answer_callback_query(call.id)
         tx_id = call.data.replace("req_utr_", "")
         
-        # Register user session state
-        msg = bot.send_message(call.message.chat.id, "✍️ Please enter or paste your **12-digit UPI Reference Number / UTR** from your banking app payment receipt:")
+        msg = bot.send_message(call.message.chat.id, "✍️ Please enter or paste your **12-digit UPI Reference Number / UTR**:")
         bot.register_next_step_handler(msg, process_utr_submission, tx_id)
+
+# --- QUANTITY HANDLER ---
+def process_quantity_input(message):
+    input_text = message.text.strip()
+    
+    if not input_text.isdigit() or int(input_text) <= 0:
+        msg = bot.send_message(message.chat.id, "❌ Invalid quantity! Please enter a valid number greater than 0. Tap /start to try again.")
+        return
+
+    requested_qty = int(input_text)
+
+    # Check stock file to make sure you have enough to sell
+    try:
+        with open("stock.txt", "r") as file:
+            current_stock = len(file.readlines())
+    except FileNotFoundError:
+        current_stock = 0
+
+    if requested_qty > current_stock:
+        bot.send_message(message.chat.id, f"❌ Out of Stock! You requested {requested_qty} accounts, but we only have {current_stock} left.\n\nTap /start to check again.")
+        return
+
+    # Dynamic Pricing calculated live
+    total_cost = requested_qty * PRICE_PER_ACCOUNT
+
+    markup = InlineKeyboardMarkup()
+    btn_upi = InlineKeyboardButton("🇮🇳 Pay via UPI", callback_data=f"pay_method_upi_{requested_qty}")
+    btn_crypto = InlineKeyboardButton("🌐 Pay via Crypto", callback_data=f"pay_method_crypto_{requested_qty}")
+    markup.add(btn_upi, btn_crypto)
+
+    bot.send_message(
+        message.chat.id,
+        f"📋 *Order Summary:*\n━━━━━━━━━━━━━━━━━━\n📦 *Quantity:* {requested_qty} accounts\n💵 *Rate:* ₹{PRICE_PER_ACCOUNT} / account\n💰 *Total Amount:* ₹{total_cost}\n━━━━━━━━━━━━━━━━━━\n\nSelect your payment gateway below:",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
 
 # --- VALIDATION GATEWAY ---
 def process_utr_submission(message, tx_id):
     utr_candidate = message.text.strip()
     
-    # Validation Rule: Must be exactly 12 digits long
     if not utr_candidate.isdigit() or len(utr_candidate) != 12:
-        msg = bot.send_message(message.chat.id, "❌ Invalid transaction UTR format. It must be exactly 12 numbers. Tap 'Submit UTR' again to retry.")
+        bot.send_message(message.chat.id, "❌ Invalid transaction UTR format. It must be exactly 12 numbers.")
         return
 
-    bot.send_message(message.chat.id, f"🔍 Checking UTR Ref: `{utr_candidate}` against real-time ledger records...")
+    bot.send_message(message.chat.id, f"🔍 Checking UTR Ref: `{utr_candidate}`...")
     
-    # Anti-Cheat check logic
     if os.path.exists("used_utrs.txt"):
         with open("used_utrs.txt", "r") as f:
             used_list = f.read().splitlines()
@@ -120,36 +157,48 @@ def process_utr_submission(message, tx_id):
         used_list = []
 
     if utr_candidate in used_list:
-        bot.send_message(message.chat.id, "❌ Error: This transaction reference number has already been claimed or processed.")
+        bot.send_message(message.chat.id, "❌ Error: This transaction reference number has already been processed.")
         return
 
-    # Log this transaction code so it can never be used again
+    # Fetch how many accounts this transaction ID contains
+    session_info = user_sessions.get(tx_id, {"quantity": 1})
+    qty_to_deliver = session_info["quantity"]
+
+    # Log UTR to anti-cheat database
     with open("used_utrs.txt", "a") as f:
         f.write(utr_candidate + "\n")
 
-    # Release Inventory
+    # Release multiple items dynamically from inventory
     try:
         with open("stock.txt", "r") as file:
             lines = file.readlines()
         
-        if not lines:
-            bot.send_message(message.chat.id, "⚠️ Payment accepted, but stock ran out! Contacting system administrator for priority release.")
+        if len(lines) < qty_to_deliver:
+            bot.send_message(message.chat.id, "⚠️ Stock dropped while payment was pending! Please contact administrator @ZtraxModOwner.")
             return
             
-        chosen_account = random.choice(lines).strip()
-        if (chosen_account + '\n') in lines:
-            lines.remove(chosen_account + '\n')
-        else:
-            lines.remove(chosen_account)
+        delivered_accounts = []
+        for _ in range(qty_to_deliver):
+            chosen = random.choice(lines)
+            lines.remove(chosen)
+            delivered_accounts.append(chosen.strip())
         
         with open("stock.txt", "w") as file:
             file.writelines(lines)
             
+        # Format the accounts together cleanly
+        accounts_text = "\n".join([f"👤 ` {acc} `" for acc in delivered_accounts])
+        
         bot.send_message(
             message.chat.id, 
-            f"🎉 *Transaction Confirmed Successfully!*\n\nHere are your account credentials:\n`{chosen_account}`",
+            f"🎉 *Transaction Confirmed Successfully!*\n\nHere are your {qty_to_deliver} account credentials:\n\n{accounts_text}",
             parse_mode="Markdown"
         )
+        
+        # Clean up session memory
+        if tx_id in user_sessions:
+            del user_sessions[tx_id]
+
     except Exception as e:
         bot.send_message(message.chat.id, "Critical structural storage read error.")
 
